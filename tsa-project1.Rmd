@@ -1,0 +1,51 @@
+---
+title: "Trabalho Prático 1 - Análise de Séries Temporais"
+author: "Marcos Augusto Daza Barbosa, William Edward Rappel de Amorim"
+date: "25 de Janeiro de 2023"
+output: html_document
+---
+
+```{r setup, results=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+pacman::p_load(rmdformats, ggplot2, forecast)
+```
+
+## **Introdução**
+
+Neste trabalho, será realizado um estudo com o objetivo de ajustar modelos ARIMA e ETS aos dados de uma série temporal selecionada do banco de dados da competição de previsão M3, disponível no pacote `Mcomp`. A série escolhida para realizar essa análise é a com `id` igual a 1931.
+
+```{r load-data}
+require(Mcomp)
+data(M3)
+id <- 1931
+names(M3[[id]])
+M3[[id]]$period
+M3[[id]]$description
+M3[[id]]$n
+M3[[id]]$h
+M3[[id]]$x
+```
+
+Ela é uma série mensal, que descreve os envios de madeira. Possui 126
+observações de treino, denominadas de parte *in-sample*, e 18 observações de teste, denominadas de parte *out-of-sample*.
+
+A figura abaixo apresenta o comportamento observado desta série na amostra de treino, que inicia em Janeiro de 1982 e termina em Junho 1992.
+
+```{r simple-plot, out.height="50%", out.width="70%"}
+x <- M3[[id]]$x
+autoplot(x) +
+  labs(x='Data', y='Valor Observado') +
+  theme_bw()
+```
+
+Ao analisar a figura, parece existir um comportamento sazonal e uma tendência de crescimento ocorrida até 1988. Para entender mais profundamente o comportamento das componentes dessa série temporal, foi realizada uma decomposição via STL, por meio da função automática `mstl`.
+
+```{r stl, out.height="70%", out.width="70%"}
+decomp.mstl <- mstl(x)
+autoplot(decomp.mstl) +
+  labs(x='Data') +
+  theme_bw()
+```
+
+A figura ilustra o resultado dessa decomposição. A componente de tendência (`Trend´)
+é inicialmente crescente e depois estabiliza, e é bastante relevante no valor da série (`Data`), pois sua escala varia de 3000 a 6000, enquanto a série original varia de 2000 a 7000. A componente de sazonalidade (`Seasonal12`) identificada pela função apresenta ciclo sazonal de tamanho 12, o que já era esperado por se tratar de uma série mensal Essa componente aparenta ser aproximadamente constante ao longo da série, tendo uma escala variando de -600 a 600. Já a componente de ruído (`Remainder`) apresentou um bom comportamento na maior parte do tempo.
