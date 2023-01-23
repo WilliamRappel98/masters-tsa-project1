@@ -2,50 +2,738 @@
 title: "Trabalho Prático 1 - Análise de Séries Temporais"
 author: "Marcos Augusto Daza Barbosa, William Edward Rappel de Amorim"
 date: "25 de Janeiro de 2023"
-output: html_document
+output: bookdown::html_document2
 ---
 
-```{r setup, results=FALSE, message=FALSE}
-knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
-pacman::p_load(rmdformats, ggplot2, forecast)
+```{r setup, results=F, message=F, warning=F, echo=F}
+knitr::opts_chunk$set(message=F, warning=F)
+pacman::p_load(Mcomp, tidyverse, forecast, tseries, knitr, cowplot, kableExtra)
 ```
 
-## **Introdução**
+# **Introdução**
 
-Neste trabalho, será realizado um estudo com o objetivo de ajustar modelos ARIMA e ETS aos dados de uma série temporal selecionada do banco de dados da competição de previsão M3, disponível no pacote `Mcomp`. A série escolhida para realizar essa análise é a com `id` igual a 1931.
+Neste trabalho, será realizado um estudo com o objetivo de ajustar modelos ARIMA e ETS aos dados de uma série temporal selecionada do banco de dados da competição de previsão M3, disponível no pacote `Mcomp`. A série escolhida para realizar essa análise é a com *id* igual a 1931.
 
-```{r load-data}
-require(Mcomp)
+```{r load-data, echo=F}
 data(M3)
 id <- 1931
-names(M3[[id]])
-M3[[id]]$period
-M3[[id]]$description
-M3[[id]]$n
-M3[[id]]$h
-M3[[id]]$x
+period <- M3[[id]]$period
+description <- M3[[id]]$description
+x <- M3[[id]]$x
+n <- M3[[id]]$n
+h <- M3[[id]]$h
+xx <- M3[[id]]$xx
 ```
 
-Ela é uma série mensal, que descreve os envios de madeira. Possui 126
-observações de treino, denominadas de parte *in-sample*, e 18 observações de teste, denominadas de parte *out-of-sample*.
+Ela é uma série mensal, que descreve os envios de madeira. Possui 126 observações de treino, denominadas de parte *in-sample*, e 18 observações de teste, denominadas de parte *out-of-sample*.
 
 A figura abaixo apresenta o comportamento observado desta série na amostra de treino, que inicia em Janeiro de 1982 e termina em Junho 1992.
 
-```{r simple-plot, out.height="50%", out.width="70%"}
+```{r ts-plot, fig.align='center', fig.cap='Comportamento da série ao longo do tempo.', out.height='50%', out.width='70%', echo=F}
+x %>%
+  autoplot() +
+  labs(x='Ano', y='Valor Observado') +
+  theme_bw()
+```
+
+Ao analisar a figura, parece existir uma tendência de crescimento ocorrida até 1988. Para entender mais profundamente o comportamento das componentes dessa série temporal, foi realizada uma decomposição via STL, por meio da função automática `mstl`.
+
+```{r stl-plot, fig.align='center', fig.cap='Decomposição STL da série.', out.height='70%', out.width='70%', echo=F}
+x %>%
+  mstl() %>%
+  autoplot() +
+  labs(x='Ano') +
+  theme_bw()
+```
+
+A figura ilustra o resultado dessa decomposição. A componente de tendência (`Trend`) é inicialmente crescente e depois estabiliza, e é bastante relevante no valor da série (`Data`), pois sua escala varia de 3000 a 6000, enquanto a série original varia de 2000 a 7000. A componente de sazonalidade (`Seasonal12`) identificada pela função apresenta ciclo sazonal de tamanho 12, o que já era esperado por se tratar de uma série mensal. Essa componente aparenta ser aproximadamente constante ao longo da série, tendo uma escala variando de -600 a 600. Já a componente de ruído (`Remainder`) apresentou um bom comportamento na maior parte do tempo, similar a um ruído branco.
+
+# **Modelos ARIMA**
+
+Nesta seleção, será realizado um procedimento de seleção e análise de modelos ARIMA ajustados nesta série temporal.
+
+## **Transformações**
+
+```{r diffs, echo=F}
+diffs <- c()
+if (x %>% ndiffs() == 1) {
+  w <- diff(x)
+  diffs <- c(diffs, 1)
+  if (w %>% nsdiffs() == 1) {
+    w <- diff(w, lag=12)
+    diffs <- c(diffs, 12)
+  }
+}
+```
+
+O primeiro passo para determinar o melhor modelo a ser utilizado é entender quais transformações devem ser aplicadas para tornar a série original estacionária. Ao aplicar a função `ndiffs`, obtém-se o valor 1, ou seja, deve-se ser aplicada uma diferença simples e o `d` é igual a 1.
+
+Em seguida, aplica-se a função `nsdiffs` ao resultado da primeira diferença simples. Ela retorna 0, ou seja, não serão necessárias diferenças sazonais. Dessa forma, `D` igual a 0.
+
+A figura abaixo apresenta o comportamento observado da série original e da série diferenciada.
+
+```{r diffs-plot, fig.align='center', fig.cap='Diferenciação.', out.height='70%', out.width='70%', echo=F}
+cbind(Original=x, Diferenciada=w) %>%
+  autoplot(facets=T) +
+  labs(x='Ano', y='Valor Observado') +
+  theme_bw()
+```
+
+A série original é nitidamente não estacionária, e a série diferenciada aparenta ser, hipótese confirmada ao realizar o teste *Augmented Dickey-Fuller*.
+
+```{r diffs-adf, echo=F}
+w %>% adf.test()
+```
+
+## **Seleção da ordem**
+
+Para selecionar os parâmetros `p`, `q`, `P` e `Q`, deve-se investigar as autocorrelações e autocorrelações parciais.
+
+```{r acf-pacf, fig.align='center', fig.cap='ACF e PACF.', fig.show='hold', out.width='50%', echo=F}
+w %>%
+  ggAcf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+w %>%
+  ggPacf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+```
+
+Ao analisar o gráfico ACF, dentre as não sazonais, parece haver um valor mais significativo no primeiro *lag*, assim `q` igual a 1 é um bom palpite. Já ao investigar os *lags* sazonais, os mais significativos são 12, 24 e 36. Assim, serão consideradas como possibilidades para `Q` os valores 1, 2 e 3.
+
+Já ao analisar o PACF, dentre os não sazonais, novamente o primeiro é o mais significativo, assim será utilizado `p` igual a 1. Para os sazonais, o *lag* 24 é o mais significativo. Dessa forma, serão consideradas como possibilidades para `P`: 0, 1 e 2.
+
+Ao ajustar todos os modelos ARIMA correspondentes as combinações dos parâmetros `p`, `q`, `P` e `Q`, seleciona-se o modelo com menor AICc, que é apresentado abaixo.
+
+```{r select-arima, echo=F}
+p <- 1
+q <- 1
+P <- 0:2
+Q <- 1:3
+best_aicc <- Inf
+for (Pi in P) {
+  for (Qi in Q) {
+    mod <- x %>% Arima(order=c(1, 1, 1), seasonal=c(Pi, 0, Qi), include.mean=F, lambda=NULL)
+    if (mod$aicc < best_aicc) {
+      best_mod <- mod
+      best_aicc <- mod$aicc
+    }
+  }
+} 
+mod1 <- best_mod
+mod1 %>% summary()
+```
+
+Dessa forma, foi selecionado o modelo `ARIMA(1,1,1)(1,0,2)[12]`, com AICc de 1834,76.
+
+Em seguida, realiza-se o mesmo procedimento de seleção pelo AICc, só que agora considerando a transformação de Box-Cox, sendo que o parâmetro `lambda` é definido automaticamente por meio da heurística já implementada na função `Arima` do pacote `forecast`.
+
+```{r select-arima-box, echo=F}
+best_aicc <- Inf
+for (Pi in P) {
+  for (Qi in Q) {
+    mod <- x %>% Arima(order=c(1, 1, 1), seasonal=c(Pi, 0, Qi), include.mean=F, lambda='auto')
+    if (mod$aicc < best_aicc) {
+      best_mod <- mod
+      best_aicc <- mod$aicc
+    }
+  }
+} 
+mod2 <- best_mod
+mod2 %>% summary()
+```
+
+Dessa forma, foi selecionado o modelo `ARIMA(1,1,1)(1,0,2)[12]`, com AICc de 1060,15 e o `lambda` escolhido igual a 0,64.
+
+## **Análise de resíduos**
+
+Para analisar os resíduos, serão utilizadas abordagens gráficas e testes de hipóteses.
+
+Primeiro, serão realizadas análises com o modelo ARIMA sem a transformação de Box-Cox.
+
+```{r residuals-arima, fig.align='center', fig.cap='Análise de resíduos modelo ARIMA.', echo=F}
+res1 <- mod1 %>% residuals()
+est1 <- res1 %>%
+  autoplot() +
+  labs(x='Ano', y='Resíduos') +
+  theme_bw()
+qq1 <- res1 %>%
+  data.frame() %>%
+  ggplot(aes(sample=res1)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(x='Quantis Teóricos', y='Quantis Amostrais') +
+  theme_bw()
+acf1 <- res1 %>%
+  ggAcf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+pacf1 <- res1 %>%
+  ggPacf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+plot_grid(est1, qq1, acf1, pacf1, nrow=2)
+```
+
+Ao avaliar o primeiro gráfico, os resíduos aparentam ser estacionários, tendo média zero e variância constante. Além disso, ao avaliar o *qqplot*, aparentam ser aproximadamente normais. Por último, por meio do ACF e PACF, nenhuma autocorrelação é muito siginificativa, sendo quase todas dentro da banda de não significância e, as poucas que saíram, estão bem próximas do limite.
+
+Ao realizar os testes *Augmented Dickey-Fuller*, *Ljung-Box* e *Shapiro-Wilk*, conclui-se que os resíduos são estacionários, independentes e normais, respectivamente.
+
+Agora, realiza-se procedimento semelhante, porém com o modelo ARIMA com a transformação de Box-Cox.
+
+```{r residuals-arima-box, fig.align='center', fig.cap='Análise de resíduos modelo ARIMA com Box-Cox.', echo=F}
+res2 <- mod2 %>% residuals()
+est2 <- res2 %>%
+  autoplot() +
+  labs(x='Ano', y='Resíduos') +
+  theme_bw()
+qq2 <- res2 %>%
+  data.frame() %>%
+  ggplot(aes(sample=res2)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(x='Quantis Teóricos', y='Quantis Amostrais') +
+  theme_bw()
+acf2 <- res2 %>%
+  ggAcf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+pacf2 <- res2 %>%
+  ggPacf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+plot_grid(est2, qq2, acf2, pacf2, nrow=2)
+```
+
+As conclusões são muito semelhantes às obtidas anteriormente: os resíduos aparentam ser estacionários, normais e independentes. Ao realizar os testes *Augmented Dickey-Fuller*, *Ljung-Box* e *Shapiro-Wilk*, estas hipóteses são confirmadas.
+
+# **Modelos ETS**
+
+Nesta seção, será realizado um procedimento de seleção e análise de modelos ETS ajustados nesta série temporal.
+
+## **Seleção**
+
+Os modelos serão selecionados de forma automática, por meio da função `ets` do pacote `forecast`. Esse procedimento será realizado sem a transformação Box-Cox e, em seguida, com a aplicação dela considerando o parâmetro `lambda` definido automaticamente por meio da heurística já implementada na função.
+
+```{r select-ets, echo=F}
+mod3 <- x %>% ets()
+mod3 %>% summary()
+```
+
+O modelo sem Box-Cox selecionado é o ETS(M, Ad, A), ou seja, com erros multiplicativos, tendência aditiva com *damped* e sazonalidade aditiva. Ele apresenta AICc de 2092,09.
+
+```{r select-ets-box, echo=F}
+mod4 <- x %>% ets(lambda='auto')
+mod4 %>% summary()
+```
+
+O modelo com Box-Cox selecionado é o ETS(A, Ad, A), ou seja, com erros aditivos, tendência aditiva com *damped* e sazonalidade aditiva. Ele apresenta AICc de 1311,69 e teve *lambda* escolhido de 0,64.
+
+## **Análise de resíduos**
+
+Primeiro, serão realizadas análises com o modelo ETS sem a transformação de Box-Cox.
+
+```{r residuals-ets, fig.align='center', fig.cap='Análise de resíduos modelo ETS.', echo=F}
+res3 <- mod3 %>% residuals()
+est3 <- res3 %>%
+  autoplot() +
+  labs(x='Ano', y='Resíduos') +
+  theme_bw()
+qq3 <- res3 %>%
+  data.frame() %>%
+  ggplot(aes(sample=res3)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(x='Quantis Teóricos', y='Quantis Amostrais') +
+  theme_bw()
+acf3 <- res3 %>%
+  ggAcf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+pacf3 <- res3 %>%
+  ggPacf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+plot_grid(est3, qq3, acf3, pacf3, nrow=2)
+```
+
+Por meio do primeiro gráfico, os resíduos aparentam ser estacionários, tendo média zero e variância constante. Já o *qqplot* demonstra provável normalidade. Porém, os gráficos ACF e PACF, apresentam um valor bastante significativo no *lag* 12. Por meio do testes, confirma-se essas hipóteses: os resíduos são estacionários, normais e **não** independentes.
+
+Agora, será avaliado o modelo ETS com transformação Box-Cox.
+
+```{r residuals-ets-box, fig.align='center', fig.cap='Análise de resíduos modelo ETS.', echo=F}
+res4 <- mod4 %>% residuals()
+est4 <- res4 %>%
+  autoplot() +
+  labs(x='Ano', y='Resíduos') +
+  theme_bw()
+qq4 <- res4 %>%
+  data.frame() %>%
+  ggplot(aes(sample=res4)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(x='Quantis Teóricos', y='Quantis Amostrais') +
+  theme_bw()
+acf4 <- res4 %>%
+  ggAcf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+pacf4 <- res4 %>%
+  ggPacf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+plot_grid(est4, qq4, acf4, pacf4, nrow=2)
+```
+
+As conclusões são idênticas às obtidas com o modelo ETS sem a transformação Box-Cox: apesar de serem estacionários e normais, os resíduos apresentam **não** independência.
+
+# **Estudo do desempenho preditivo**
+
+Nesta seção, será realizado um estudo da performance preditiva dos 4 modelos candidatos apresentados anteriormente, utilizando uma janela deslizante, iniciando no ponto `n-14` e considerando horizontes de predição até 5 passos à frente.
+
+A tabela e figura abaixo apresentam os resultados de erro absoluto médio obtido por cada modelo, para cada horizonte de predição.
+
+```{r sliding-window-tab, echo=F}
+f_arima1 <- function(y, h){
+  fit <- Arima(y, order=c(1, 1, 1), seasonal=c(1, 0, 2), include.mean=F, lambda=NULL)
+  forecast(fit, h)
+}
+f_arima2 <- function(y, h){
+  fit <- Arima(y, order=c(1, 1, 1), seasonal=c(1, 0, 2), include.mean=F, lambda='auto')
+  forecast(fit, h)
+}
+f_ets1 <- function(y, h){
+  fit <- ets(y)
+  forecast(fit, h)
+}
+f_ets2 <- function(y, h){
+  fit <- ets(y, lambda='auto')
+  forecast(fit, h)
+}
+CV_arima1 <- x %>% tsCV(forecastfunction=f_arima1, h=5, initial=n-14)
+CV_arima2 <- x %>% tsCV(forecastfunction=f_arima2, h=5, initial=n-14)
+CV_ets1 <- x %>% tsCV(forecastfunction=f_ets1, h=5, initial=n-14)
+CV_ets2 <- x %>% tsCV(forecastfunction=f_ets2, h=5, initial=n-14)
+MAE_arima1 <- CV_arima1 %>% abs() %>% colMeans(na.rm=T)
+MAE_arima2 <- CV_arima2 %>% abs() %>% colMeans(na.rm=T)
+MAE_ets1 <- CV_ets1 %>% abs() %>% colMeans(na.rm=T)
+MAE_ets2 <- CV_ets2 %>% abs() %>% colMeans(na.rm=T)
+tab <- cbind(MAE_arima1, MAE_arima2, MAE_ets1, MAE_ets2)
+tab %>%
+  kable(
+    col.names=c('ARIMA', 'ARIMA + Box-Cox', 'ETS', 'ETS + Box-Cox'),
+    caption='MAE por horizonte de predição.',
+    digits=2,
+    format.args=list(decimal.mark=',', big.mark='.', scientific=F),
+    align='c'
+  ) %>%
+  kable_styling(
+    position='center',
+    bootstrap_options=c('striped', 'hover', 'condensed', 'responsive')
+  )
+```
+
+```{r sliding-window-plot, fig.align='center', fig.cap='Desempenho preditivo por horizonte de predição.', out.height='50%', out.width='70%', echo=F}
+tab_plot <- tab %>%
+  as.data.frame() %>%
+  mutate(Horizonte=1:5) %>%
+  gather(key='Modelo', value='MAE', -Horizonte)
+tab_plot %>%
+  ggplot(aes(x=Horizonte, y=MAE)) +
+  geom_line(aes(color=Modelo)) + 
+  scale_color_manual(
+    values=c('black', 'darkred', 'steelblue', 'darkgreen'),
+    breaks=c('MAE_arima1', 'MAE_arima2', 'MAE_ets1', 'MAE_ets2'),
+    labels=c('ARIMA', 'ARIMA + Box-Cox', 'ETS', 'ETS + Box-Cox')
+    ) +
+  theme_bw()
+```
+
+A partir da análise da tabela e do gráfico, tem-se que para os primeiros 4 horizontes de predição, o modelo mais preciso é o ARIMA, seguido pelo ETS, depois pelo ARIMA + Box-Cox e, por último, o ETS + Box-Cox. Já no horizonte 5, a ordem se altera: o ETS troca com o ARIMA e o ETS + Box-Cox troca com o ARIMA + Box-Cox.
+
+# **Resultados**
+
+Nesta seção, serão obtidas previsões pontuais e intervalares de 95% com os 4 modelos candidatos selecionados. Em seguida, o desempenho nos dados de testes serão comparados com de alguns *benchmarks*.
+
+As figuras abaixo ilustram o comportamento dessas previsões, conjutamente com o comportamento observado nos dados de teste.
+
+```{r preds-plot-1, fig.align='center', fig.cap='Previsão pontual e intervalar do ARIMA.', echo=F, out.height='50%', out.width='70%'}
+plot_preds <- function(mod, nome='') {
+  vec <- c(nome, 'Observado')
+  cores <- c('#0000AA', 'red')
+  names(cores) <- vec
+  preds <- forecast(mod, h=h, level=95)
+  plot_obj <- x %>%
+    autoplot() + xlab('') + ylab('') + theme_bw() +
+    autolayer(preds, series=nome) +
+    autolayer(xx, series='Observado') +
+    scale_colour_manual(
+      values=cores,
+      breaks=vec,
+      name='')
+  return(plot_obj)
+}
+plot_preds(mod1, 'ARIMA')
+```
+
+```{r preds-plot-2, fig.align='center', fig.cap='Previsão pontual e intervalar do ARIMA + Box-Cox.', echo=F, out.height='50%', out.width='70%'}
+plot_preds(mod2, 'ARIMA + Box-Cox')
+```
+
+```{r preds-plot-3, fig.align='center', fig.cap='Previsão pontual e intervalar do ETS.', echo=F, out.height='50%', out.width='70%'}
+plot_preds(mod3, 'ETS')
+```
+
+```{r preds-plot-4, fig.align='center', fig.cap='Previsão pontual e intervalar do ETS + Box-Cox.', echo=F, out.height='50%', out.width='70%'}
+plot_preds(mod4, 'ETS + Box-Cox')
+```
+
+Por meio da análise dos gráficos, todos os modelos apresentaram previsões pontuais razoáveis e previsões intervalares com bom grau de cobertura dos dados verdadeiros de teste.
+
+Agora, serão realizadas as comparações com os *benchmarks*.
+
+```{r benchmarks, echo=F}
+preds <- list(
+  'ARIMA' = forecast(mod1, h=h),
+  'ARIMA + Box-Cox' = forecast(mod2, h=h),
+  'ETS' = forecast(mod3, h=h),
+  'ETS + Box-Cox' = forecast(mod4, h=h),
+  'auto.arima' = forecast(auto.arima(x), h=h),
+  'SES' = ses(x, h=h),
+  'Holt' = holt(x, h=h),
+  'sltf' = stlf(x, h=h),
+  'BATS' = forecast(bats(x), h=h),
+  'TBATS' = forecast(tbats(x), h=h),
+  'Bagged ETS' = forecast(baggedETS(x), h=h)
+)
+mae <- unlist(lapply(preds, function(m) return(mean(abs(xx - m$mean)))))
+final <- data.frame(MAE=mae)
+final %>%
+  kable(
+    caption='MAE nos dados de teste.',
+    digits=2,
+    format.args=list(decimal.mark=',', big.mark='.', scientific=F),
+    align='c'
+  ) %>%
+  kable_styling(
+    position='center',
+    bootstrap_options=c('striped', 'hover', 'condensed', 'responsive')
+  )
+```
+
+Ao avaliar a tabela acima, percebe-se que apesar do ARIMA ter tido o melhor desempenho na análise de janela deslizante, o candidato com melhor desempenho no teste foi o ETS. Além disso, o ARIMA + Box-Cox foi mais preciso do que o ARIMA sem a transformação. O ETS foi superior a 4 *benchmarks*: `auto.arima`, `ses`, `holt` e `stlf`. Já BATS, TBATS e *Bagged* ETS foram superiores ao ETS, sendo que o *Bagged* ETS foi consideravelmente mais preciso que todos os demais.
+
+# **Conclusão**
+
+A partir dos 4 modelos candidatos obtidos, os 2 modelos ARIMA apresentaram resíduos com todas as características esperadas, já os resíduos dos 2 modelos ETS apresentaram não independência. Em relação ao desempenho preditivo, em geral os modelos com transformação Box-Cox apresentaram pior performance do que os sem essa transformação. Além disso, os ARIMAs foram mais precisos do que os ETS. Já na comparação com os *benchmarks*, o ETS foi o melhor modelo dentre os 4 candidatos, porém os *bechmarks* BATS, TBATS e *Bagged* ETS foram superiores a este, com destaque para o último, que teve o menor MAE dentre todos.
+
+# **Anexo: Código R**
+
+```{r full-code, eval=F}
+### Packages
+pacman::p_load(Mcomp, tidyverse, forecast, tseries, knitr, cowplot, kableExtra, forecTheta)
+
+
+### Data
+data(M3)
+id <- 1931
+period <- M3[[id]]$period
+description <- M3[[id]]$description
 x <- M3[[id]]$x
-autoplot(x) +
-  labs(x='Data', y='Valor Observado') +
+n <- M3[[id]]$n
+h <- M3[[id]]$h
+xx <- M3[[id]]$xx
+
+
+### Time series plot
+x %>%
+  autoplot() +
+  labs(x='Ano', y='Valor Observado') +
   theme_bw()
-```
 
-Ao analisar a figura, parece existir um comportamento sazonal e uma tendência de crescimento ocorrida até 1988. Para entender mais profundamente o comportamento das componentes dessa série temporal, foi realizada uma decomposição via STL, por meio da função automática `mstl`.
 
-```{r stl, out.height="70%", out.width="70%"}
-decomp.mstl <- mstl(x)
-autoplot(decomp.mstl) +
-  labs(x='Data') +
+### STL decomposition
+x %>%
+  mstl() %>%
+  autoplot() +
+  labs(x='Ano') +
   theme_bw()
-```
 
-A figura ilustra o resultado dessa decomposição. A componente de tendência (`Trend´)
-é inicialmente crescente e depois estabiliza, e é bastante relevante no valor da série (`Data`), pois sua escala varia de 3000 a 6000, enquanto a série original varia de 2000 a 7000. A componente de sazonalidade (`Seasonal12`) identificada pela função apresenta ciclo sazonal de tamanho 12, o que já era esperado por se tratar de uma série mensal Essa componente aparenta ser aproximadamente constante ao longo da série, tendo uma escala variando de -600 a 600. Já a componente de ruído (`Remainder`) apresentou um bom comportamento na maior parte do tempo.
+
+### ARIMA
+# Diffs
+diffs <- c()
+if (x %>% ndiffs() == 1) {
+  w <- diff(x)
+  diffs <- c(diffs, 1)
+  if (w %>% nsdiffs() == 1) {
+    w <- diff(w, lag=12)
+    diffs <- c(diffs, 12)
+  }
+}
+cbind(Original=x, Diferenciada=w) %>%
+  autoplot(facets=T) +
+  labs(x='Ano', y='Valor Observado') +
+  theme_bw()
+w %>% adf.test()
+# Manual selection
+w %>%
+  ggAcf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+w %>%
+  ggPacf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+# p = 1
+# q = 1
+# P = 0, 1 ou 2
+# Q = 1, 2 ou 3
+p <- 1
+q <- 1
+P <- 0:2
+Q <- 1:3
+# Without Box-Cox
+best_aicc <- Inf
+for (Pi in P) {
+  for (Qi in Q) {
+    mod <- x %>% Arima(order=c(1, 1, 1), seasonal=c(Pi, 0, Qi), include.mean=F, lambda=NULL)
+    if (mod$aicc < best_aicc) {
+      best_mod <- mod
+      best_aicc <- mod$aicc
+    }
+  }
+} 
+mod1 <- best_mod
+mod1 %>% summary()
+# With Box-Cox
+best_aicc <- Inf
+for (Pi in P) {
+  for (Qi in Q) {
+    mod <- x %>% Arima(order=c(1, 1, 1), seasonal=c(Pi, 0, Qi), include.mean=F, lambda='auto')
+    if (mod$aicc < best_aicc) {
+      best_mod <- mod
+      best_aicc <- mod$aicc
+    }
+  }
+} 
+mod2 <- best_mod
+mod2 %>% summary()
+# Residual analysis without Box-Cox
+res1 <- mod1 %>% residuals()
+est1 <- res1 %>%
+  autoplot() +
+  labs(x='Ano', y='Resíduos') +
+  theme_bw()
+qq1 <- res1 %>%
+  data.frame() %>%
+  ggplot(aes(sample=res1)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(x='Quantis Teóricos', y='Quantis Amostrais') +
+  theme_bw()
+acf1 <- res1 %>%
+  ggAcf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+pacf1 <- res1 %>%
+  ggPacf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+plot_grid(est1, qq1, acf1, pacf1, nrow=2)
+res1 %>% adf.test() 
+res1 %>% Box.test(lag=20, type='Ljung-Box', fitdf=5)
+res1 %>% shapiro.test()
+mod1 %>% checkresiduals()
+# Residual analysis with Box-Cox
+res2 <- mod2 %>% residuals()
+est2 <- res2 %>%
+  autoplot() +
+  labs(x='Ano', y='Resíduos') +
+  theme_bw()
+qq2 <- res2 %>%
+  data.frame() %>%
+  ggplot(aes(sample=res2)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(x='Quantis Teóricos', y='Quantis Amostrais') +
+  theme_bw()
+acf2 <- res2 %>%
+  ggAcf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+pacf2 <- res2 %>%
+  ggPacf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+plot_grid(est2, qq2, acf2, pacf2, nrow=2)
+res2 %>% adf.test()
+res2 %>% Box.test(lag=20, type='Ljung-Box', fitdf=5)
+res2 %>% shapiro.test()
+mod2 %>% checkresiduals()
+
+
+### ETS
+# Auto selection without Box-Cox
+mod3 <- x %>% ets()
+mod3 %>% summary()
+# Auto selection with Box-Cox
+mod4 <- x %>% ets(lambda='auto')
+mod4 %>% summary()
+# Residual analysis without Box-Cox
+res3 <- mod3 %>% residuals()
+est3 <- res3 %>%
+  autoplot() +
+  labs(x='Ano', y='Resíduos') +
+  theme_bw()
+qq3 <- res3 %>%
+  data.frame() %>%
+  ggplot(aes(sample=res3)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(x='Quantis Teóricos', y='Quantis Amostrais') +
+  theme_bw()
+acf3 <- res3 %>%
+  ggAcf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+pacf3 <- res3 %>%
+  ggPacf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+plot_grid(est3, qq3, acf3, pacf3, nrow=2)
+res3 %>% adf.test()
+res3 %>% Box.test(lag=20, type='Ljung-Box', fitdf=17)
+res3 %>% shapiro.test()
+mod3 %>% checkresiduals()
+# Residual analysis with Box-Cox
+res4 <- mod4 %>% residuals()
+est4 <- res4 %>%
+  autoplot() +
+  labs(x='Ano', y='Resíduos') +
+  theme_bw()
+qq4 <- res4 %>%
+  data.frame() %>%
+  ggplot(aes(sample=res4)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(x='Quantis Teóricos', y='Quantis Amostrais') +
+  theme_bw()
+acf4 <- res4 %>%
+  ggAcf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+pacf4 <- res4 %>%
+  ggPacf(lag.max=12*5) +
+  labs(title='') +
+  theme_bw()
+plot_grid(est4, qq4, acf4, pacf4, nrow=2)
+res4 %>% adf.test()
+res4 %>% Box.test(lag=20, type='Ljung-Box', fitdf=17)
+res4 %>% shapiro.test()
+mod4 %>% checkresiduals()
+
+
+### Sliding window validation
+f_arima1 <- function(y, h){
+  fit <- Arima(y, order=c(1, 1, 1), seasonal=c(1, 0, 2), include.mean=F, lambda=NULL)
+  forecast(fit, h)
+}
+f_arima2 <- function(y, h){
+  fit <- Arima(y, order=c(1, 1, 1), seasonal=c(1, 0, 2), include.mean=F, lambda='auto')
+  forecast(fit, h)
+}
+f_ets1 <- function(y, h){
+  fit <- ets(y)
+  forecast(fit, h)
+}
+f_ets2 <- function(y, h){
+  fit <- ets(y, lambda='auto')
+  forecast(fit, h)
+}
+CV_arima1 <- x %>% tsCV(forecastfunction=f_arima1, h=5, initial=n-14)
+CV_arima2 <- x %>% tsCV(forecastfunction=f_arima2, h=5, initial=n-14)
+CV_ets1 <- x %>% tsCV(forecastfunction=f_ets1, h=5, initial=n-14)
+CV_ets2 <- x %>% tsCV(forecastfunction=f_ets2, h=5, initial=n-14)
+MAE_arima1 <- CV_arima1 %>% abs() %>% colMeans(na.rm=T)
+MAE_arima2 <- CV_arima2 %>% abs() %>% colMeans(na.rm=T)
+MAE_ets1 <- CV_ets1 %>% abs() %>% colMeans(na.rm=T)
+MAE_ets2 <- CV_ets2 %>% abs() %>% colMeans(na.rm=T)
+tab <- cbind(MAE_arima1, MAE_arima2, MAE_ets1, MAE_ets2)
+tab %>%
+  kable(
+    col.names=c('ARIMA', 'ARIMA + Box-Cox', 'ETS', 'ETS + Box-Cox'),
+    caption='MAE por horizonte de predição.',
+    digits=2,
+    format.args=list(decimal.mark=',', big.mark='.', scientific=F),
+    align='c'
+  ) %>%
+  kable_styling(
+    position='center',
+    bootstrap_options=c('striped', 'hover', 'condensed', 'responsive')
+  )
+tab_plot <- tab %>%
+  as.data.frame() %>%
+  mutate(Horizonte=1:5) %>%
+  gather(key='Modelo', value='MAE', -Horizonte)
+tab_plot %>%
+  ggplot(aes(x=Horizonte, y=MAE)) +
+  geom_line(aes(color=Modelo)) + 
+  scale_color_manual(
+    values=c('black', 'darkred', 'steelblue', 'darkgreen'),
+    breaks=c('MAE_arima1', 'MAE_arima2', 'MAE_ets1', 'MAE_ets2'),
+    labels=c('ARIMA', 'ARIMA + Box-Cox', 'ETS', 'ETS + Box-Cox')
+    ) +
+  theme_bw()
+
+
+### Forecast
+# plots
+plot_preds <- function(mod, nome='') {
+  vec <- c(nome, 'Observado')
+  cores <- c('#0000AA', 'red')
+  names(cores) <- vec
+  preds <- forecast(mod, h=h, level=95)
+  plot_obj <- x %>%
+    autoplot() + xlab('') + ylab('') + theme_bw() +
+    autolayer(preds, series=nome) +
+    autolayer(xx, series='Observado') +
+    scale_colour_manual(
+      values=cores,
+      breaks=vec,
+      name='')
+  return(plot_obj)
+}
+plot_preds(mod1, 'ARIMA')
+plot_preds(mod2, 'ARIMA + Box-Cox')
+plot_preds(mod3, 'ETS')
+plot_preds(mod4, 'ETS + Box-Cox')
+# Benchmark comparison
+preds <- list(
+  'ARIMA' = forecast(mod1, h=h),
+  'ARIMA + Box-Cox' = forecast(mod2, h=h),
+  'ETS' = forecast(mod3, h=h),
+  'ETS + Box-Cox' = forecast(mod4, h=h),
+  'auto.arima' = forecast(auto.arima(x), h=h),
+  'SES' = ses(x, h=h),
+  'Holt' = holt(x, h=h),
+  'sltf' = stlf(x, h=h),
+  'BATS' = forecast(bats(x), h=h),
+  'TBATS' = forecast(tbats(x), h=h),
+  'Bagged ETS' = forecast(baggedETS(x), h=h)
+)
+mae <- unlist(lapply(preds, function(m) return(mean(abs(xx - m$mean)))))
+final <- data.frame(MAE=mae)
+final %>%
+  kable(
+    caption='MAE nos dados de teste.',
+    digits=2,
+    format.args=list(decimal.mark=',', big.mark='.', scientific=F),
+    align='c'
+  ) %>%
+  kable_styling(
+    position='center',
+    bootstrap_options=c('striped', 'hover', 'condensed', 'responsive')
+  )
+```
