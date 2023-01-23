@@ -1,3 +1,7 @@
+### Reproducibility
+set.seed(10)
+
+
 ### Packages
 pacman::p_load(Mcomp, tidyverse, forecast, tseries, knitr, cowplot, kableExtra, forecTheta)
 
@@ -232,8 +236,8 @@ tab %>%
   kable(
     col.names=c('ARIMA', 'ARIMA + Box-Cox', 'ETS', 'ETS + Box-Cox'),
     caption='MAE por horizonte de predição.',
-    digits=2,
-    format.args=list(decimal.mark=',', big.mark='.', scientific=F),
+    digits=0,
+    format.args=list(decimal.mark=',', scientific=F),
     align='c'
   ) %>%
   kable_styling(
@@ -248,7 +252,7 @@ tab_plot %>%
   ggplot(aes(x=Horizonte, y=MAE)) +
   geom_line(aes(color=Modelo)) + 
   scale_color_manual(
-    values=c('black', 'darkred', 'steelblue', 'darkgreen'),
+    values=c('black', 'red', '#0000AA', 'darkgreen'),
     breaks=c('MAE_arima1', 'MAE_arima2', 'MAE_ets1', 'MAE_ets2'),
     labels=c('ARIMA', 'ARIMA + Box-Cox', 'ETS', 'ETS + Box-Cox')
     ) +
@@ -256,6 +260,42 @@ tab_plot %>%
 
 
 ### Forecast
+# tables
+preds1 <- forecast(mod1, h=h, level=95)
+preds2 <- forecast(mod2, h=h, level=95)
+preds3 <- forecast(mod3, h=h, level=95)
+preds4 <- forecast(mod4, h=h, level=95)
+pontual <- t(cbind(xx, preds1$mean, preds2$mean, preds3$mean, preds4$mean))
+colnames(pontual) <- 1:h
+row.names(pontual) <- c('Observado', 'ARIMA', 'ARIMA + Box-Cox', 'ETS', 'ETS + Box-Cox')
+pontual %>%
+  kable(
+    caption='Previsões pontuais por horizonte de predição.',
+    digits=0,
+    format.args=list(decimal.mark=',', scientific=F),
+    align='c'
+  ) %>%
+  kable_styling(
+    position='center',
+    bootstrap_options=c('striped', 'hover', 'condensed', 'responsive')
+  )
+intervalares <- t(cbind(xx, preds1$lower, preds1$upper, preds2$lower, preds2$upper,
+                        preds3$lower, preds3$upper, preds4$lower, preds4$upper))
+colnames(intervalares) <- 1:h
+row.names(intervalares) <- c('Observado', 'ARIMA Inf', 'ARIMA Sup', 'ARIMA + Box-Cox Inf',
+                             'ARIMA + Box-Cox Sup', 'ETS Inf', 'ETS Sup', 'ETS + Box-Cox Inf',
+                             'ETS + Box-Cox Sup')
+intervalares %>%
+  kable(
+    caption='Previsões intervalares de 95% de confiança por horizonte de predição.',
+    digits=0,
+    format.args=list(decimal.mark=',', scientific=F),
+    align='c'
+  ) %>%
+  kable_styling(
+    position='center',
+    bootstrap_options=c('striped', 'hover', 'condensed', 'responsive')
+  )
 # plots
 plot_preds <- function(mod, nome='') {
   vec <- c(nome, 'Observado')
@@ -263,7 +303,7 @@ plot_preds <- function(mod, nome='') {
   names(cores) <- vec
   preds <- forecast(mod, h=h, level=95)
   plot_obj <- x %>%
-    autoplot() + xlab('') + ylab('') + theme_bw() +
+    autoplot() + xlab('Ano') + ylab('Valor Observado') + theme_bw() +
     autolayer(preds, series=nome) +
     autolayer(xx, series='Observado') +
     scale_colour_manual(
@@ -295,8 +335,8 @@ final <- data.frame(MAE=mae)
 final %>%
   kable(
     caption='MAE nos dados de teste.',
-    digits=2,
-    format.args=list(decimal.mark=',', big.mark='.', scientific=F),
+    digits=0,
+    format.args=list(decimal.mark=',', scientific=F),
     align='c'
   ) %>%
   kable_styling(
