@@ -5,5 +5,5 @@ Os arquivos relevantes do repositório seguem abaixo.
 
 - [Enunciado.pdf](Enunciado.pdf): arquivo PDF que descreve quais etapas consistem o projeto.
 - [tsa-project1.html](tsa-project1.html): arquivo HTML com o relatório completo de todos os passos desenvolvidos e resultados obtidos.
-- [tsa-project1.rmd](tsa-project1.rmd): arquivo RMD utilizada para gerar o relatório HTML.
+- [tsa-project1.Rmd](tsa-project1.Rmd): arquivo Rmd utilizado para gerar o relatório HTML.
 - [script.R](script.R): script de linguagem R contendo todos os códigos utilizados nas análises e estudos.
