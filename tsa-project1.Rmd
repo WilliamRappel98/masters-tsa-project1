@@ -472,7 +472,13 @@ Ao avaliar a tabela acima, percebe-se que apesar do ARIMA ter tido o melhor dese
 
 # **Conclusão**
 
-A partir dos 4 modelos candidatos obtidos, os 2 modelos ARIMA apresentaram resíduos com todas as características esperadas, já os resíduos dos 2 modelos ETS apresentaram não independência. Em relação ao desempenho preditivo, em geral os modelos com transformação Box-Cox apresentaram pior performance do que os sem essa transformação. Além disso, os ARIMAs foram mais precisos do que os ETS. Já na comparação com os *benchmarks*, o ETS foi o melhor modelo dentre os 4 candidatos, porém os *bechmarks* BATS, TBATS e *Bagged* ETS foram superiores a este, com destaque para o último, que teve o menor MAE dentre todos.
+A partir dos 4 modelos candidatos obtidos, os 2 modelos ARIMA apresentaram resíduos com todas as características esperadas, já os resíduos dos 2 modelos ETS apresentaram não independência.
+
+Em relação à analise do desempenho preditivo obtido pela janela deslizante, em geral os modelos com transformação Box-Cox apresentaram pior performance do que os sem essa transformação. Além disso, os ARIMAs foram mais precisos do que os ETS.
+
+Contudo, ao avaliar o desempenho preditivo por meio dos valores de teste, os modelos ETS foram mais precisos que ambos os ARIMAs, sendo que o ETS sem a transformação Box-Cox teve o melhor desempenho dentre os 4 candidatos.
+
+Já na comparação com os *benchmarks*, o BATS, TBATS e *Bagged* ETS foram superiores aos 4 modelos candidatos e aos demais *benchmarks*, com destaque para o *Bagged* ETS, que teve o menor MAE dentre todos.
 
 # **Anexo: Código R**
 
